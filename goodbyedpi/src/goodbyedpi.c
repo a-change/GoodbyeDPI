@@ -109,6 +109,7 @@ static const char *http_methods[] = {
     "CONNECT ",
     "OPTIONS ",
 };
+//static const char *filter_
 
 static char *filter_string = NULL;
 static char *filter_passive_string = NULL;
@@ -271,6 +272,22 @@ static PVOID find_http_method_end(const char *pkt, unsigned int http_frag, int *
     return NULL;
 }
 
+static char *print_ipaddress(uint32_t ipaddr)
+{
+  static char str[16];
+  char *ptr = str;
+  while (ipaddr) {
+    char tmp[5];
+    _itoa(ipaddr >> 24, tmp, 10);
+    ptr = strcpy(ptr, tmp) + strlen(tmp);
+    *ptr = '.';
+    ptr++;
+    ipaddr <<= 8;
+  }
+  *--ptr = 0;
+  return str;
+}
+
 int main(int argc, char *argv[]) {
     static enum packet_type_e {
         unknown,
@@ -430,6 +447,17 @@ int main(int argc, char *argv[]) {
             }
 
             debug("packet_type: %d, packet_v4: %d, packet_v6: %d\n", packet_type, packet_v4, packet_v6);
+            
+            if (ppIpHdr != NULL)
+            {
+              debug("src: %s, ", print_ipaddress(ppIpHdr->SrcAddr));
+              debug("dest: %s\n", print_ipaddress(ppIpHdr->DstAddr));
+            }
+            else
+            {
+              debug("src: %s, ", print_ipaddress(ppIpV6Hdr->SrcAddr));
+              debug("dest: %s\n", print_ipaddress(ppIpV6Hdr->DstAddr));
+            }
 
             if (packet_type == ipv4_tcp_data || packet_type == ipv6_tcp_data) {
                 //printf("Got parsed packet, len=%d!\n", packet_dataLen);
