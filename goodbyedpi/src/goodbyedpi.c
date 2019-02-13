@@ -91,7 +91,6 @@
     } \
 } while (0)
 
-static int running_from_service = 0;
 static HANDLE filters[MAX_FILTERS];
 static int filter_num = 0;
 static const char http10_redirect_302[] = "HTTP/1.0 302 ";
@@ -113,43 +112,6 @@ static const char *http_methods[] = {
 
 static char *filter_string = NULL;
 static char *filter_passive_string = NULL;
-
-static void add_filter_str(int proto, int port) {
-    const char *udp = " or (udp and !impostor and !loopback and " \
-                      "(udp.SrcPort == %d or udp.DstPort == %d))";
-    const char *tcp = " or (tcp and !impostor and !loopback and " \
-                      "(tcp.SrcPort == %d or tcp.DstPort == %d))";
-
-    char *current_filter = filter_string;
-    size_t new_filter_size = strlen(current_filter) +
-            (proto == IPPROTO_UDP ? strlen(udp) : strlen(tcp)) + 16;
-    char *new_filter = malloc(new_filter_size);
-
-    strcpy(new_filter, current_filter);
-    if (proto == IPPROTO_UDP)
-        sprintf(&(new_filter[strlen(new_filter)]), udp, port, port);
-    else
-        sprintf(&(new_filter[strlen(new_filter)]), tcp, port, port);
-
-    filter_string = new_filter;
-    free(current_filter);
-}
-
-static void add_ip_id_str(int id) {
-    char *newstr;
-    const char *ipid = " or ip.Id == %d";
-    char *addfilter = malloc(strlen(ipid) + 16);
-
-    sprintf(addfilter, ipid, id);
-
-    newstr = repl_str(filter_string, IPID_TEMPLATE, addfilter);
-    free(filter_string);
-    filter_string = newstr;
-
-    newstr = repl_str(filter_passive_string, IPID_TEMPLATE, addfilter);
-    free(filter_passive_string);
-    filter_passive_string = newstr;
-}
 
 static void finalize_filter_strings() {
     char *newstr;
@@ -176,20 +138,6 @@ static char* dumb_memmem(const char* haystack, unsigned int hlen,
     }
     return NULL;
 }
-
-unsigned short int atousi(const char *str, const char *msg) {
-    long unsigned int res = strtoul(str, NULL, 10u);
-    enum {
-        limitValue=0xFFFFu
-    };
-
-    if(res > limitValue) {
-        puts(msg);
-        exit(EXIT_FAILURE);
-    }
-    return (unsigned short int)res;
-}
-
 
 static HANDLE init(char *filter, UINT64 flags) {
     LPTSTR errormessage = NULL;
@@ -369,30 +317,10 @@ int main(int argc, char *argv[]) {
 
     // Make sure to search DLLs only in safe path, not in current working dir.
     SetDllDirectory("");
-    SetSearchPathMode(0x00001 | 0x08000);
+    SetSearchPathMode(BASE_SEARCH_PATH_ENABLE_SAFE_SEARCHMODE | BASE_SEARCH_PATH_PERMANENT);
 
-    //if (!running_from_service) {
-    //    running_from_service = 1;
-    //    if (service_register(argc, argv)) {
-    //        /* We've been called as a service. Register service
-    //         * and exit this thread. main() would be called from
-    //         * service.c next time.
-    //         *
-    //         * Note that if service_register() succeedes it does
-    //         * not return until the service is stopped.
-    //         * That is why we should set running_from_service
-    //         * before calling service_register and unset it
-    //         * afterwards.
-    //         */
-    //        return 0;
-    //    }
-    //    running_from_service = 0;
-    //}
-
-    if (filter_string == NULL)
-        filter_string = _strdup(FILTER_STRING_TEMPLATE);
-    if (filter_passive_string == NULL)
-        filter_passive_string = _strdup(FILTER_PASSIVE_STRING_TEMPLATE);
+    filter_string = _strdup(FILTER_STRING_TEMPLATE);
+    filter_passive_string = _strdup(FILTER_PASSIVE_STRING_TEMPLATE);
 
     printf(
         "GoodbyeDPI " GOODBYEDPI_VERSION
@@ -400,191 +328,11 @@ int main(int argc, char *argv[]) {
         "https://github.com/ValdikSS/GoodbyeDPI\n\n"
     );
 
-    if (argc == 1) {
-        /* enable mode -1 by default */
-        http_fragment_size = https_fragment_size = 2;
-        do_passivedpi = do_host = do_host_removespace \
-                = do_fragment_http = do_fragment_https \
-                = do_fragment_http_persistent \
-                = do_fragment_http_persistent_nowait = 1;
-    }
-
-    //while ((opt = getopt_long(argc, argv, "1234prsaf:e:mwk:n", long_options, NULL)) != -1) {
-    //    switch (opt) {
-    //        case '1':
-    //            do_passivedpi = do_host = do_host_removespace \
-    //            = do_fragment_http = do_fragment_https \
-    //            = do_fragment_http_persistent \
-    //            = do_fragment_http_persistent_nowait = 1;
-    //            break;
-    //        case '2':
-    //            do_passivedpi = do_host = do_host_removespace \
-    //            = do_fragment_http = do_fragment_https \
-    //            = do_fragment_http_persistent \
-    //            = do_fragment_http_persistent_nowait = 1;
-    //            https_fragment_size = 40u;
-    //            break;
-    //        case '3':
-    //            do_passivedpi = do_host = do_host_removespace \
-    //            = do_fragment_https = 1;
-    //            https_fragment_size = 40u;
-    //            break;
-    //        case '4':
-    //            do_passivedpi = do_host = do_host_removespace = 1;
-    //            break;
-    //        case 'p':
-    //            do_passivedpi = 1;
-    //            break;
-    //        case 'r':
-    //            do_host = 1;
-    //            break;
-    //        case 's':
-    //            do_host_removespace = 1;
-    //            break;
-    //        case 'a':
-    //            do_additional_space = 1;
-    //            do_host_removespace = 1;
-    //            break;
-    //        case 'm':
-    //            do_host_mixedcase = 1;
-    //            break;
-    //        case 'f':
-    //            do_fragment_http = 1;
-    //            SET_HTTP_FRAGMENT_SIZE_OPTION(atousi(optarg, "Fragment size should be in range [0 - 0xFFFF]\n"));
-    //            break;
-    //        case 'k':
-    //            do_fragment_http_persistent = 1;
-    //            SET_HTTP_FRAGMENT_SIZE_OPTION(atousi(optarg, "Fragment size should be in range [0 - 0xFFFF]\n"));
-    //            break;
-    //        case 'n':
-    //            do_fragment_http_persistent_nowait = 1;
-    //            break;
-    //        case 'e':
-    //            do_fragment_https = 1;
-    //            https_fragment_size = atousi(optarg, "Fragment size should be in range [0 - 65535]\n");
-    //            break;
-    //        case 'w':
-    //            do_http_allports = 1;
-    //            break;
-    //        case 'z':
-    //            /* i is used as a temporary variable here */
-    //            i = atoi(optarg);
-    //            if (i <= 0 || i > 65535) {
-    //                printf("Port parameter error!\n");
-    //                exit(EXIT_FAILURE);
-    //            }
-    //            if (i != 80 && i != 443)
-    //                add_filter_str(IPPROTO_TCP, i);
-    //            i = 0;
-    //            break;
-    //        case 'i':
-    //            /* i is used as a temporary variable here */
-    //            i = atousi(optarg, "IP ID parameter error!\n");
-    //            add_ip_id_str(i);
-    //            i = 0;
-    //            break;
-    //        case 'd':
-    //            if ((inet_pton(AF_INET, optarg, dns_temp_addr.s6_addr) == 1) &&
-    //                !do_dnsv4_redirect)
-    //            {
-    //                do_dnsv4_redirect = 1;
-    //                if (inet_pton(AF_INET, optarg, &dnsv4_addr) != 1) {
-    //                    puts("DNS address parameter error!");
-    //                    exit(EXIT_FAILURE);
-    //                }
-    //                add_filter_str(IPPROTO_UDP, 53);
-    //                flush_dns_cache();
-    //                break;
-    //            }
-    //            puts("DNS address parameter error!");
-    //            exit(EXIT_FAILURE);
-    //            break;
-    //        case '!':
-    //            if ((inet_pton(AF_INET6, optarg, dns_temp_addr.s6_addr) == 1) &&
-    //                !do_dnsv6_redirect)
-    //            {
-    //                do_dnsv6_redirect = 1;
-    //                if (inet_pton(AF_INET6, optarg, dnsv6_addr.s6_addr) != 1) {
-    //                    puts("DNS address parameter error!");
-    //                    exit(EXIT_FAILURE);
-    //                }
-    //                add_filter_str(IPPROTO_UDP, 53);
-    //                flush_dns_cache();
-    //                break;
-    //            }
-    //            puts("DNS address parameter error!");
-    //            exit(EXIT_FAILURE);
-    //            break;
-    //        case 'g':
-    //            if (!do_dnsv4_redirect) {
-    //                puts("--dns-port should be used with --dns-addr!\n"
-    //                    "Make sure you use --dns-addr and pass it before "
-    //                    "--dns-port");
-    //                exit(EXIT_FAILURE);
-    //            }
-    //            dnsv4_port = atousi(optarg, "DNS port parameter error!");
-    //            if (dnsv4_port != 53) {
-    //                add_filter_str(IPPROTO_UDP, dnsv4_port);
-    //            }
-    //            dnsv4_port = htons(dnsv4_port);
-    //            break;
-    //        case '@':
-    //            if (!do_dnsv6_redirect) {
-    //                puts("--dnsv6-port should be used with --dnsv6-addr!\n"
-    //                    "Make sure you use --dnsv6-addr and pass it before "
-    //                    "--dnsv6-port");
-    //                exit(EXIT_FAILURE);
-    //            }
-    //            dnsv6_port = atousi(optarg, "DNS port parameter error!");
-    //            if (dnsv6_port != 53) {
-    //                add_filter_str(IPPROTO_UDP, dnsv6_port);
-    //            }
-    //            dnsv6_port = htons(dnsv6_port);
-    //            break;
-    //        case 'v':
-    //            do_dns_verb = 1;
-    //            break;
-    //        case 'b':
-    //            do_blacklist = 1;
-    //            if (!blackwhitelist_load_list(optarg)) {
-    //                printf("Can't load blacklist from file!\n");
-    //                exit(EXIT_FAILURE);
-    //            }
-    //            break;
-    //        default:
-    //            puts("Usage: goodbyedpi.exe [OPTION...]\n"
-    //            " -p          block passive DPI\n"
-    //            " -r          replace Host with hoSt\n"
-    //            " -s          remove space between host header and its value\n"
-    //            " -a          additional space between Method and Request-URI (enables -s, may break sites)\n"
-    //            " -m          mix Host header case (test.com -> tEsT.cOm)\n"
-    //            " -f [value]  set HTTP fragmentation to value\n"
-    //            " -k [value]  enable HTTP persistent (keep-alive) fragmentation and set it to value\n"
-    //            " -n          do not wait for first segment ACK when -k is enabled\n"
-    //            " -e [value]  set HTTPS fragmentation to value\n"
-    //            " -w          try to find and parse HTTP traffic on all processed ports (not only on port 80)\n"
-    //            " --port        [value]    additional TCP port to perform fragmentation on (and HTTP tricks with -w)\n"
-    //            " --ip-id       [value]    handle additional IP ID (decimal, drop redirects and TCP RSTs with this ID).\n"
-    //            " --dns-addr    [value]    redirect UDPv4 DNS requests to the supplied IPv4 address (experimental)\n"
-    //            " --dns-port    [value]    redirect UDPv4 DNS requests to the supplied port (53 by default)\n"
-    //            " --dnsv6-addr  [value]    redirect UDPv6 DNS requests to the supplied IPv6 address (experimental)\n"
-    //            " --dnsv6-port  [value]    redirect UDPv6 DNS requests to the supplied port (53 by default)\n"
-    //            " --dns-verb               print verbose DNS redirection messages\n"
-    //            " --blacklist   [txtfile]  perform HTTP tricks only to host names and subdomains from\n"
-    //            "                          supplied text file. This option can be supplied multiple times.\n"
-    //            "\n"
-    //            " -1          -p -r -s -f 2 -k 2 -n -e 2 (most compatible mode, default)\n"
-    //            " -2          -p -r -s -f 2 -k 2 -n -e 40 (better speed for HTTPS yet still compatible)\n"
-    //            " -3          -p -r -s -e 40 (better speed for HTTP and HTTPS)\n"
-    //            " -4          -p -r -s (best speed)");
-    //            exit(EXIT_FAILURE);
-    //    }
-    //}
-
-    if (!http_fragment_size)
-        http_fragment_size = 2;
-    if (!https_fragment_size)
-        https_fragment_size = 2;
+    http_fragment_size = https_fragment_size = 2;
+    do_passivedpi = do_host = do_host_removespace \
+            = do_fragment_http = do_fragment_https \
+            = do_fragment_http_persistent \
+            = do_fragment_http_persistent_nowait = 1;
 
     printf("Block passive: %d\nFragment HTTP: %d\nFragment persistent HTTP: %d\n"
            "Fragment HTTPS: %d\nhoSt: %d\nHost no space: %d\nAdditional space: %d\n"
