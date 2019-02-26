@@ -10,12 +10,16 @@
 #include <string.h>
 //#include <in6addr.h>
 #include <ws2tcpip.h>
+#include <Iphlpapi.h>
+#include <TlHelp32.h>
 #include "windivert.h"
 #include "goodbyedpi.h"
 #include "utils/repl_str.h"
 #include "dnsredir.h"
 #include "blackwhitelist.h"
+#include "../resource.h"
 #pragma comment(lib, "Ws2_32.lib")
+#pragma comment(lib, "Iphlpapi.lib")
 #define PVOID char *
 
 #define GOODBYEDPI_VERSION "v0.1.5"
@@ -288,7 +292,80 @@ static char *print_ipaddress(uint32_t ipaddr)
   return str;
 }
 
+static BOOL filterByProcessName(u_short src_port, u_short dest_port, char *proc)
+{
+  MIB_TCPTABLE_OWNER_PID *pTCPInfo;
+  MIB_TCPROW_OWNER_PID *owner;
+  DWORD size;
+  DWORD dwResult;
+
+  dwResult = GetExtendedTcpTable(NULL, &size, 0, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
+  pTCPInfo = (MIB_TCPTABLE_OWNER_PID*)malloc(size);
+  dwResult = GetExtendedTcpTable(pTCPInfo, &size, 0, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0);
+  for (DWORD dwLoop = 0; dwLoop < pTCPInfo->dwNumEntries; dwLoop++)
+  {
+    owner = &pTCPInfo->table[dwLoop];
+    int open = ntohs(owner->dwLocalPort);
+    int remote = ntohs(owner->dwRemotePort);
+
+    if (open == ntohs(src_port) && remote == ntohs(dest_port)) {
+      //debug("pid: %d ", owner->dwOwningPid);
+
+      HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+      if (hSnapshot) {
+        PROCESSENTRY32 pe32;
+        pe32.dwSize = sizeof(PROCESSENTRY32);
+        if (Process32First(hSnapshot, &pe32)) {
+          do {
+            if (pe32.th32ProcessID == owner->dwOwningPid) {
+              //printf("(%s)\n", pe32.szExeFile);
+              if (!strcmp(proc, pe32.szExeFile))
+                return TRUE;
+              return FALSE;
+              break;
+            }
+          } while (Process32Next(hSnapshot, &pe32));
+        }
+        CloseHandle(hSnapshot);
+      }
+    }
+  }
+  return FALSE;
+}
+
+BOOL extractResource(const HINSTANCE hInstance, WORD resourceID, LPCTSTR szFilename)
+{
+  BOOL bSuccess = FALSE;
+
+  // Find and load the resource
+  HRSRC hResource = FindResource(NULL, MAKEINTRESOURCE(resourceID), "dll");
+  HGLOBAL hFileResource = LoadResource(NULL, hResource);
+  debug("%d", hFileResource);
+
+  // Open and map this to a disk file
+  LPVOID lpFile = LockResource(hFileResource);
+  DWORD dwSize = SizeofResource(hInstance, hResource);
+
+  // Open the file and filemap
+  HANDLE hFile = CreateFile(szFilename, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  HANDLE hFileMap = CreateFileMapping(hFile, NULL, PAGE_READWRITE, 0, dwSize, NULL);
+  LPVOID lpAddress = MapViewOfFile(hFileMap, FILE_MAP_WRITE, 0, 0, 0);
+
+  // Write the file
+  CopyMemory(lpAddress, lpFile, dwSize);
+
+  // Un-map the file and close the handles
+  UnmapViewOfFile(lpAddress);
+  CloseHandle(hFileMap);
+  CloseHandle(hFile);
+  bSuccess = TRUE;
+
+  return bSuccess;
+}
+
 int main(int argc, char *argv[]) {
+    //extractResource(GetModuleHandle(NULL), IDR_DLL1, "WinDivert.dll");
+
     static enum packet_type_e {
         unknown,
         ipv4_tcp, ipv4_tcp_data, ipv4_udp_data,
@@ -400,10 +477,13 @@ int main(int argc, char *argv[]) {
     printf("Filter activated!\n");
     signal(SIGINT, sigint_handler);
 
+    int ports[65535] = { 0, };
+
     while (1) {
         if (WinDivertRecv(w_filter, packet, sizeof(packet), &addr, &packetLen)) {
-            debug("Got %s packet, len=%d!\n", addr.Direction ? "inbound" : "outbound",
-                   packetLen);
+            //debug("=============================================\n");
+            //debug("Got %s packet, len=%d!\n", addr.Direction ? "inbound" : "outbound",
+            //       packetLen);
             should_reinject = 1;
             should_recalc_checksum = 0;
 
@@ -446,17 +526,31 @@ int main(int argc, char *argv[]) {
                 packet_type = ipv6_udp_data;
             }
 
-            debug("packet_type: %d, packet_v4: %d, packet_v6: %d\n", packet_type, packet_v4, packet_v6);
-            
-            if (ppIpHdr != NULL)
+            //debug("packet_type: %d, packet_v4: %d, packet_v6: %d\n", packet_type, packet_v4, packet_v6);
+
+            if (ppTcpHdr != NULL && filterByProcessName(ppTcpHdr->SrcPort, ppTcpHdr->DstPort, "Koromo Copy UX.exe"))
             {
-              debug("src: %s, ", print_ipaddress(ppIpHdr->SrcAddr));
-              debug("dest: %s\n", print_ipaddress(ppIpHdr->DstAddr));
-            }
-            else
-            {
-              debug("src: %s, ", print_ipaddress(ppIpV6Hdr->SrcAddr));
-              debug("dest: %s\n", print_ipaddress(ppIpV6Hdr->DstAddr));
+              debug("=============================================\n");
+
+              debug("src-port: %d, ", ntohs(ppTcpHdr->SrcPort));
+              debug("dest-port: %d\n", ntohs(ppTcpHdr->DstPort));
+
+              if (ppIpHdr != NULL)
+              {
+                debug("src: %s, ", print_ipaddress(ppIpHdr->SrcAddr));
+                debug("dest: %s\n", print_ipaddress(ppIpHdr->DstAddr));
+              }
+              else
+              {
+                debug("src: %s, ", print_ipaddress(ppIpV6Hdr->SrcAddr));
+                debug("dest: %s\n", print_ipaddress(ppIpV6Hdr->DstAddr));
+              }
+
+              ports[ntohs(ppTcpHdr->SrcPort)]++;
+
+              for (int i = 0; i < 65535; i++)
+                if (ports[i] > 0)
+                  debug(" -- %d (%d)\n", i, ports[i]);
             }
 
             if (packet_type == ipv4_tcp_data || packet_type == ipv6_tcp_data) {

@@ -16,6 +16,13 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="windivert\doc\WinDivert.html" />
+    <None Include="..\Release\WinDivert.dll" />
+    <None Include="dll2.bin">
+      <Filter>리소스 파일</Filter>
+    </None>
+    <None Include="dll1.bin">
+      <Filter>리소스 파일</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="windivert\include\windivert.h">
@@ -39,6 +46,9 @@
     <ClInclude Include="src\utils\uthash.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\blackwhitelist.c">
@@ -56,5 +66,10 @@
     <ClCompile Include="src\utils\repl_str.c">
       <Filter>소스 파일</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="goodbyedpi.rc">
+      <Filter>리소스 파일</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>
